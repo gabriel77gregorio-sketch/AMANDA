@@ -977,3 +977,40 @@ textarea:focus {
     break-after: avoid !important;
   }
 }
+
+/* ===== Reforço de impressão: evita corte de página ===== */
+@media print {
+  html, body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+  .app-container, main, #view-report, .view {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+    float: none !important;
+    position: static !important;
+  }
+  #view-list, #view-eval { display: none !important; }
+  .a4-document {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    height: auto !important;
+    box-sizing: border-box !important;
+  }
+  .a4-document * { max-width: 100% !important; box-sizing: border-box !important; }
+  .rep-table { table-layout: fixed !important; width: 100% !important; }
+  .rep-table th, .rep-table td { word-break: break-word !important; overflow-wrap: anywhere !important; }
+  .rep-table tr, .rep-note-item, .rep-diag-box, .rep-summary-grid { break-inside: avoid !important; page-break-inside: avoid !important; }
+  /* blocos grandes podem quebrar entre linhas, evitando conteúdo empurrado/cortado */
+  .rep-table, .rep-notes-list, .rep-signatures {
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }
+  .rep-signatures { break-inside: avoid !important; page-break-inside: avoid !important; }
+  .rep-logo-img { height: 40px !important; width: auto !important; }
+}
