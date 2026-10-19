@@ -170,11 +170,20 @@ function getGlobalAverage(colab) {
 
 // 3. GERENCIAMENTO DE ESTADO E PERSISTÊNCIA
 function loadColaboradores() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+      throw new Error('Formato inválido');
+    }
   } catch (err) {
-    console.error('Erro ao ler localStorage', err);
+    console.error('Erro ao ler dados salvos', err);
+    // Guarda uma cópia dos dados ilegíveis e NÃO sobrescreve com exemplos
+    try { localStorage.setItem(STORAGE_KEY + '_corrompido_' + Date.now(), raw || ''); } catch (e) { /* ignore */ }
+    window.__dadosCorrompidos = true;
+    return [];
   }
 
   // Exemplos iniciais para apresentação imediata
@@ -237,8 +246,11 @@ function loadColaboradores() {
 function saveColaboradores(data) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return true;
   } catch (err) {
     console.error('Erro ao salvar no localStorage', err);
+    alert('Não foi possível salvar os dados neste navegador (armazenamento cheio ou bloqueado). Use "Exportar backup" para não perder informações.');
+    return false;
   }
 }
 
@@ -354,6 +366,8 @@ function renderColaboradoresList() {
             PDF / Relatório
           </button>
 
+          <button class="btn btn-secondary" onclick="editColaborador('${c.id}')" title="Editar nome e setor">Editar</button>
+
           <button class="btn btn-danger-outline" onclick="deleteColaborador('${c.id}')" title="Excluir colaborador e todo o histórico">
             <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
             Excluir
@@ -381,6 +395,9 @@ window.deleteColaborador = function(id) {
 
 // Cadastro de novo colaborador
 btnShowAddColab.addEventListener('click', () => {
+  formNewColab.reset();
+  editingColabId = null;
+  addColabCard.querySelector('h3').textContent = 'Cadastrar Novo Colaborador';
   addColabCard.classList.remove('hidden');
   document.getElementById('new-colab-nome').focus();
 });
@@ -388,9 +405,25 @@ btnShowAddColab.addEventListener('click', () => {
 function hideAddColabCard() {
   addColabCard.classList.add('hidden');
   formNewColab.reset();
+  editingColabId = null;
+  addColabCard.querySelector('h3').textContent = 'Cadastrar Novo Colaborador';
 }
 btnCancelAddColab.addEventListener('click', hideAddColabCard);
 btnCancelAddColab2.addEventListener('click', hideAddColabCard);
+
+let editingColabId = null;
+
+window.editColaborador = function(id) {
+  const c = colaboradores.find(x => x.id === id);
+  if (!c) return;
+  editingColabId = id;
+  document.getElementById('new-colab-nome').value = c.nome;
+  document.getElementById('new-colab-setor').value = c.setor;
+  addColabCard.querySelector('h3').textContent = 'Editar Colaborador';
+  addColabCard.classList.remove('hidden');
+  window.scrollTo(0, 0);
+  document.getElementById('new-colab-nome').focus();
+};
 
 formNewColab.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -398,18 +431,86 @@ formNewColab.addEventListener('submit', (e) => {
   const setor = document.getElementById('new-colab-setor').value.trim();
   if (!nome || !setor) return;
 
-  const newColab = {
-    id: uid(),
-    nome,
-    setor,
-    criadoEm: new Date().toISOString().slice(0, 10),
-    avaliacoes: []
-  };
+  const dup = colaboradores.find(c => c.id !== editingColabId &&
+    c.nome.toLowerCase() === nome.toLowerCase() && c.setor.toLowerCase() === setor.toLowerCase());
+  if (dup) {
+    alert('Já existe um colaborador com este nome e setor.');
+    return;
+  }
 
-  colaboradores.unshift(newColab);
+  if (editingColabId) {
+    const c = colaboradores.find(x => x.id === editingColabId);
+    if (c) { c.nome = nome; c.setor = setor; }
+  } else {
+    colaboradores.unshift({
+      id: uid(),
+      nome,
+      setor,
+      criadoEm: new Date().toISOString().slice(0, 10),
+      avaliacoes: []
+    });
+  }
+
   saveColaboradores(colaboradores);
   hideAddColabCard();
   renderColaboradoresList();
+});
+
+// Exclusão de uma avaliação individual (a partir do relatório)
+window.deleteEvaluation = function(colabId, evalId) {
+  const c = colaboradores.find(x => x.id === colabId);
+  if (!c) return;
+  const ev = c.avaliacoes.find(a => a.id === evalId);
+  if (!ev) return;
+  if (!confirm(`Excluir a avaliação feita por "${ev.lider}"? As médias serão recalculadas.`)) return;
+  c.avaliacoes = c.avaliacoes.filter(a => a.id !== evalId);
+  saveColaboradores(colaboradores);
+  renderPrintableReport(c);
+};
+
+// Backup e restauração dos dados
+function exportBackup() {
+  const blob = new Blob([JSON.stringify({ versao: 2, exportadoEm: new Date().toISOString(), colaboradores }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `backup-avaliacoes-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function isValidColab(c) {
+  return c && typeof c.id === 'string' && typeof c.nome === 'string' && typeof c.setor === 'string' &&
+    Array.isArray(c.avaliacoes) &&
+    c.avaliacoes.every(a => a && typeof a.id === 'string' && a.respostas && typeof a.respostas === 'object');
+}
+
+function importBackup(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const list = Array.isArray(parsed) ? parsed : parsed.colaboradores;
+      if (!Array.isArray(list) || !list.every(isValidColab)) throw new Error('inválido');
+      if (!confirm(`Restaurar backup com ${list.length} colaborador(es)?\n\nISTO SUBSTITUI todos os dados atuais deste navegador.`)) return;
+      colaboradores = list;
+      saveColaboradores(colaboradores);
+      renderColaboradoresList();
+      alert('Backup restaurado com sucesso.');
+    } catch (err) {
+      alert('Arquivo de backup inválido. Nenhum dado foi alterado.');
+    }
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById('btn-export').addEventListener('click', exportBackup);
+document.getElementById('btn-import').addEventListener('click', () => document.getElementById('file-import').click());
+document.getElementById('file-import').addEventListener('change', (e) => {
+  if (e.target.files[0]) importBackup(e.target.files[0]);
+  e.target.value = '';
 });
 
 filterInput.addEventListener('input', renderColaboradoresList);
@@ -521,9 +622,11 @@ formEval.addEventListener('submit', (e) => {
 
   const answered = Object.keys(currentEvalAnswers).length;
   if (answered < TOTAL_QUESTIONS) {
-    const pendentes = TOTAL_QUESTIONS - answered;
-    const prosseguir = confirm(`Atenção: Existem ${pendentes} pergunta(s) sem nota selecionada.\n\nDeseja salvar a avaliação mesmo assim?`);
-    if (!prosseguir) return;
+    const primeira = ALL_QUESTIONS.find(q => !currentEvalAnswers[q.id]);
+    alert(`Faltam ${TOTAL_QUESTIONS - answered} pergunta(s) sem nota. Responda todas as 22 perguntas (notas de 1 a 4) para salvar.`);
+    const row = primeira && document.querySelector(`.question-row[data-qid="${primeira.id}"]`);
+    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
   }
 
   const colab = colaboradores.find(c => c.id === activeColabId);
@@ -722,6 +825,15 @@ function renderPrintableReport(colab) {
     <div class="rep-footer">
       Documento gerado eletronicamente em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} • Harpia Nutrição Animal
     </div>
+
+    <div class="no-print rep-history">
+      <div class="rep-section-title">Histórico de avaliações (não sai no PDF)</div>
+      ${evals.length ? evals.map(e => `
+        <div class="history-row">
+          <span><strong>${escapeHtml(e.lider)}</strong> · ${e.data ? new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR') : '-'} · média ${fmt(e.mediaAvaliacao)}</span>
+          <button class="btn btn-danger-outline" onclick="deleteEvaluation('${colab.id}', '${e.id}')">Excluir avaliação</button>
+        </div>`).join('') : '<p class="subtitle">Nenhuma avaliação registrada ainda.</p>'}
+    </div>
   `;
 }
 
@@ -731,4 +843,7 @@ btnPrintPdf.addEventListener('click', () => {
 });
 
 // 10. INICIALIZAÇÃO
+if (window.__dadosCorrompidos) {
+  alert('Os dados salvos neste navegador estavam ilegíveis. Uma cópia foi preservada e o app foi aberto vazio. Se você tiver um backup, use "Restaurar backup".');
+}
 renderColaboradoresList();
