@@ -83,6 +83,8 @@
           <span>Respostas: <strong id="live-answered-count">0/22</strong></span>
           <span class="divider">|</span>
           <span>Média Desta Avaliação: <strong id="live-eval-avg">-</strong></span>
+          <span class="divider">|</span>
+          <span>Autoavaliação (à parte): <strong id="live-self-avg">-</strong></span>
         </div>
       </div>
 
@@ -101,17 +103,16 @@
       <form id="form-eval" class="eval-form-body">
         <!-- DADOS DA AVALIAÇÃO ATUAL -->
         <div class="card">
-          <h3 class="card-title">1. Informações do Avaliador</h3>
-          <div class="grid-form">
-            <div class="form-group">
-              <label for="eval-leader-name">Nome do Líder * (Obrigatório)</label>
-              <input type="text" id="eval-leader-name" required placeholder="Digite seu nome completo">
-            </div>
+          <h3 class="card-title">1. Informações dos Avaliadores</h3>
+          <p class="subtitle" style="margin-bottom: 12px;">Adicione um líder para cada avaliador. Cada um terá a sua própria coluna de notas.</p>
+          <div id="eval-leaders-list"></div>
+          <div class="grid-form" style="margin-top: 12px;">
             <div class="form-group">
               <label for="eval-date">Data da Avaliação</label>
               <input type="date" id="eval-date" required>
             </div>
           </div>
+          <button type="button" class="btn btn-secondary" id="btn-add-leader" style="margin-top: 12px;">+ Adicionar outro líder</button>
         </div>
 
         <!-- LEGENDA DE NOTAS -->
@@ -125,18 +126,18 @@
           </div>
         </div>
 
-        <!-- 8 SEÇÕES COM 22 PERGUNTAS -->
-        <div id="eval-sections-container">
-          <!-- Gerado dinamicamente via JS -->
+        <!-- 8 SEÇÕES COM 22 PERGUNTAS (UMA COLUNA POR LÍDER + AUTOAVALIAÇÃO) -->
+        <div class="eval-grid-scroll">
+          <div id="eval-sections-container">
+            <!-- Gerado dinamicamente via JS -->
+          </div>
         </div>
 
         <!-- CAMPO DE OBSERVAÇÕES FINAIS -->
         <div class="card">
           <h3 class="card-title">Observações Finais</h3>
-          <p class="subtitle" style="margin-bottom: 12px;">Espaço livre para considerações do líder, pontos de destaque, combinados ou metas de desenvolvimento.</p>
-          <div class="form-group">
-            <textarea id="eval-notes" rows="5" placeholder="Escreva aqui suas observações sobre o colaborador..."></textarea>
-          </div>
+          <p class="subtitle" style="margin-bottom: 12px;">Espaço livre para considerações de cada líder e, se desejado, comentários da autoavaliação do colaborador.</p>
+          <div id="eval-notes-container"></div>
         </div>
 
         <!-- AÇÕES -->

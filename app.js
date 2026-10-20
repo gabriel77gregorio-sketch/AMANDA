@@ -277,13 +277,15 @@ const btnEvalCancel = document.getElementById('btn-eval-cancel');
 const evalTargetNome = document.getElementById('eval-target-nome');
 const evalTargetSetor = document.getElementById('eval-target-setor');
 const evalTargetHistory = document.getElementById('eval-target-history');
-const evalLeaderName = document.getElementById('eval-leader-name');
+const evalLeadersList = document.getElementById('eval-leaders-list');
+const btnAddLeader = document.getElementById('btn-add-leader');
 const evalDate = document.getElementById('eval-date');
-const evalNotes = document.getElementById('eval-notes');
+const evalNotesContainer = document.getElementById('eval-notes-container');
 const evalSectionsContainer = document.getElementById('eval-sections-container');
 const formEval = document.getElementById('form-eval');
 const liveAnsweredCount = document.getElementById('live-answered-count');
 const liveEvalAvg = document.getElementById('live-eval-avg');
+const liveSelfAvg = document.getElementById('live-self-avg');
 
 // Elementos da Tela de Relatório
 const btnReportBack = document.getElementById('btn-report-back');
@@ -515,50 +517,127 @@ document.getElementById('file-import').addEventListener('change', (e) => {
 
 filterInput.addEventListener('input', renderColaboradoresList);
 
-// 8. TELA 2: FORMULÁRIO DE AVALIAÇÃO EM PÁGINA INTEIRA
+// 8. TELA 2: FORMULÁRIO DE AVALIAÇÃO EM PÁGINA INTEIRA (VÁRIOS LÍDERES + AUTOAVALIAÇÃO)
+const MAX_LEADERS = 5;
+let evalColumns = [];   // [{ nome, answers: {qid: nota}, notes }]
+let selfAnswers = {};   // autoavaliação do colaborador (NÃO entra na média dos líderes)
+let selfNotes = '';
+
+const newLeaderColumn = () => ({ nome: '', answers: {}, notes: '' });
+const getColAnswers = (col) => col === 'self' ? selfAnswers : (evalColumns[Number(col)] || {}).answers;
+const leaderLabel = (i) => (evalColumns[i] && evalColumns[i].nome.trim()) || `Líder ${i + 1}`;
+
 window.openEvaluationForm = function(colabId) {
   const colab = colaboradores.find(c => c.id === colabId);
   if (!colab) return;
 
   activeColabId = colabId;
-  currentEvalAnswers = {};
+  evalColumns = [newLeaderColumn()];
+  selfAnswers = colab.autoavaliacao && colab.autoavaliacao.respostas ? { ...colab.autoavaliacao.respostas } : {};
+  selfNotes = colab.autoavaliacao && colab.autoavaliacao.observacoes ? colab.autoavaliacao.observacoes : '';
 
   evalTargetNome.textContent = colab.nome;
   evalTargetSetor.textContent = colab.setor;
   const numEvals = colab.avaliacoes ? colab.avaliacoes.length : 0;
   evalTargetHistory.textContent = `${numEvals} avaliações anteriores registradas`;
 
-  evalLeaderName.value = '';
   evalDate.value = new Date().toISOString().slice(0, 10);
-  evalNotes.value = '';
 
-  // Renderizar as 8 seções com 22 perguntas
-  renderEvaluationQuestions();
-  updateLiveEvaluationSummary();
-
+  renderEvaluationForm();
   navigateTo('eval');
 };
 
+function renderEvaluationForm() {
+  renderLeaderInputs();
+  renderEvaluationQuestions();
+  renderNotesFields();
+  updateLiveEvaluationSummary();
+}
+
+function renderLeaderInputs() {
+  evalLeadersList.innerHTML = evalColumns.map((c, i) => `
+    <div class="leader-input-row">
+      <div class="form-group" style="flex:1; min-width:220px;">
+        <label for="leader-name-${i}">Líder ${i + 1} * (Obrigatório)</label>
+        <input type="text" id="leader-name-${i}" value="${escapeHtml(c.nome)}" placeholder="Nome completo do líder" oninput="setLeaderName(${i}, this.value)">
+      </div>
+      ${evalColumns.length > 1 ? `<button type="button" class="btn btn-danger-outline" onclick="removeLeaderColumn(${i})">Remover</button>` : ''}
+    </div>
+  `).join('');
+  btnAddLeader.disabled = evalColumns.length >= MAX_LEADERS;
+}
+
+window.setLeaderName = function(i, value) {
+  evalColumns[i].nome = value;
+  document.querySelectorAll(`[data-name-col="${i}"]`).forEach(el => { el.textContent = leaderLabel(i); });
+};
+
+window.removeLeaderColumn = function(i) {
+  if (evalColumns.length <= 1) return;
+  const c = evalColumns[i];
+  if (Object.keys(c.answers).length && !confirm(`Remover a coluna de "${leaderLabel(i)}"? As notas já marcadas nela serão perdidas.`)) return;
+  evalColumns.splice(i, 1);
+  renderEvaluationForm();
+};
+
+btnAddLeader.addEventListener('click', () => {
+  if (evalColumns.length >= MAX_LEADERS) return;
+  evalColumns.push(newLeaderColumn());
+  renderEvaluationForm();
+  const input = document.getElementById(`leader-name-${evalColumns.length - 1}`);
+  if (input) input.focus();
+});
+
+window.setLeaderNotes = function(i, v) { if (evalColumns[i]) evalColumns[i].notes = v; };
+window.setSelfNotes = function(v) { selfNotes = v; };
+
+function renderNotesFields() {
+  evalNotesContainer.innerHTML = evalColumns.map((c, i) => `
+    <div class="form-group" style="margin-bottom:14px;">
+      <label>Observações de <span data-name-col="${i}">${escapeHtml(leaderLabel(i))}</span></label>
+      <textarea rows="3" placeholder="Considerações, pontos de destaque, combinados ou metas..." oninput="setLeaderNotes(${i}, this.value)">${escapeHtml(c.notes)}</textarea>
+    </div>
+  `).join('') + `
+    <div class="form-group">
+      <label>Comentários da autoavaliação do colaborador (opcional)</label>
+      <textarea rows="3" placeholder="O que o colaborador tem a dizer sobre o próprio desempenho..." oninput="setSelfNotes(this.value)">${escapeHtml(selfNotes)}</textarea>
+    </div>
+  `;
+}
+
 function renderEvaluationQuestions() {
+  const colW = 172;
+  const cols = [...evalColumns.map((c, i) => String(i)), 'self'];
+  evalSectionsContainer.style.minWidth = `${280 + cols.length * colW}px`;
+
+  const headsHtml = cols.map(col => col === 'self'
+    ? `<div class="grid-col-head self">Autoavaliação<small>não soma na nota</small></div>`
+    : `<div class="grid-col-head"><span data-name-col="${col}">${escapeHtml(leaderLabel(Number(col)))}</span></div>`
+  ).join('');
+
   evalSectionsContainer.innerHTML = SECTIONS.map(s => `
     <div class="eval-section-card">
       <div class="eval-section-header">
         <h4 class="eval-section-title">${escapeHtml(s.title)}</h4>
-        <span class="eval-section-badge" id="badge-sec-${s.id}">Média: -</span>
+        <div class="grid-col-heads">${headsHtml}</div>
       </div>
       <div>
         ${s.questions.map(q => `
           <div class="question-row" data-qid="${q.id}">
             <div class="question-text">${escapeHtml(q.text)}</div>
-            <div class="rating-buttons" role="group" aria-label="Nota de 1 a 4">
-              ${[1, 2, 3, 4].map(val => `
-                <button type="button" 
-                  class="rate-btn" 
-                  data-qid="${q.id}" 
-                  data-value="${val}" 
-                  title="Nota ${val}"
-                  onclick="selectRating('${q.id}', ${val})">${val}</button>
-              `).join('')}
+            <div class="grid-cells">
+              ${cols.map(col => {
+                const sel = (getColAnswers(col) || {})[q.id];
+                return `<div class="grid-cell ${col === 'self' ? 'self' : ''}">
+                  <div class="rating-buttons" role="group" aria-label="Nota de 1 a 4">
+                    ${[1, 2, 3, 4].map(val => `
+                      <button type="button" class="rate-btn ${sel === val ? 'selected' : ''}"
+                        data-col="${col}" data-qid="${q.id}" data-value="${val}" title="Nota ${val}"
+                        onclick="selectRating('${col}', '${q.id}', ${val})">${val}</button>
+                    `).join('')}
+                  </div>
+                </div>`;
+              }).join('')}
             </div>
           </div>
         `).join('')}
@@ -567,89 +646,102 @@ function renderEvaluationQuestions() {
   `).join('');
 }
 
-window.selectRating = function(qid, value) {
+window.selectRating = function(col, qid, value) {
+  const answers = getColAnswers(col);
+  if (!answers) return;
   // Se clicar na mesma nota já selecionada, desmarca
-  if (currentEvalAnswers[qid] === value) {
-    delete currentEvalAnswers[qid];
-  } else {
-    currentEvalAnswers[qid] = value;
-  }
+  if (answers[qid] === value) delete answers[qid];
+  else answers[qid] = value;
 
-  // Atualizar visual dos botões desta pergunta
-  const row = document.querySelector(`.question-row[data-qid="${qid}"]`);
-  if (row) {
-    row.querySelectorAll('.rate-btn').forEach(btn => {
-      const btnVal = Number(btn.getAttribute('data-value'));
-      if (currentEvalAnswers[qid] === btnVal) {
-        btn.classList.add('selected');
-      } else {
-        btn.classList.remove('selected');
-      }
-    });
-  }
+  document.querySelectorAll(`.rate-btn[data-col="${col}"][data-qid="${qid}"]`).forEach(btn => {
+    btn.classList.toggle('selected', answers[qid] === Number(btn.getAttribute('data-value')));
+  });
 
   updateLiveEvaluationSummary();
 };
 
 function updateLiveEvaluationSummary() {
-  const answered = Object.keys(currentEvalAnswers).length;
-  liveAnsweredCount.textContent = `${answered}/${TOTAL_QUESTIONS}`;
+  const answered = evalColumns.reduce((n, c) => n + Object.keys(c.answers).length, 0);
+  liveAnsweredCount.textContent = `${answered}/${TOTAL_QUESTIONS * evalColumns.length}`;
 
-  const scores = Object.values(currentEvalAnswers);
-  const currentAvg = calcMean(scores);
-  liveEvalAvg.textContent = fmt(currentAvg);
-
-  // Atualizar badge de média de cada seção
-  SECTIONS.forEach(s => {
-    const sScores = s.questions.map(q => currentEvalAnswers[q.id]).filter(v => typeof v === 'number');
-    const sAvg = calcMean(sScores);
-    const badge = document.getElementById(`badge-sec-${s.id}`);
-    if (badge) {
-      badge.textContent = `Média: ${fmt(sAvg)}`;
-    }
-  });
+  const leaderScores = evalColumns.flatMap(c => Object.values(c.answers));
+  liveEvalAvg.textContent = fmt(calcMean(leaderScores));
+  liveSelfAvg.textContent = fmt(calcMean(Object.values(selfAnswers)));
 }
 
-// Salvar Avaliação
+// Salvar Avaliação (uma avaliação por líder + autoavaliação separada)
 formEval.addEventListener('submit', (e) => {
   e.preventDefault();
-  const leader = evalLeaderName.value.trim();
-  if (!leader) {
-    alert('Por favor, preencha o campo obrigatório: "Nome do Líder".');
-    evalLeaderName.focus();
-    return;
-  }
-
-  const answered = Object.keys(currentEvalAnswers).length;
-  if (answered < TOTAL_QUESTIONS) {
-    const primeira = ALL_QUESTIONS.find(q => !currentEvalAnswers[q.id]);
-    alert(`Faltam ${TOTAL_QUESTIONS - answered} pergunta(s) sem nota. Responda todas as 22 perguntas (notas de 1 a 4) para salvar.`);
-    const row = primeira && document.querySelector(`.question-row[data-qid="${primeira.id}"]`);
-    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    return;
-  }
 
   const colab = colaboradores.find(c => c.id === activeColabId);
   if (!colab) return;
 
-  const currentAvg = calcMean(Object.values(currentEvalAnswers));
+  const names = new Set();
+  for (let i = 0; i < evalColumns.length; i++) {
+    const c = evalColumns[i];
+    const nome = c.nome.trim();
+    if (!nome) {
+      alert(`Por favor, preencha o nome do Líder ${i + 1}.`);
+      const inp = document.getElementById(`leader-name-${i}`);
+      if (inp) inp.focus();
+      return;
+    }
+    if (names.has(nome.toLowerCase())) {
+      alert(`O líder "${nome}" aparece mais de uma vez. Use nomes diferentes ou remova a coluna repetida.`);
+      return;
+    }
+    names.add(nome.toLowerCase());
 
-  const newEval = {
-    id: uid(),
-    lider: leader,
-    data: evalDate.value || new Date().toISOString().slice(0, 10),
-    respostas: { ...currentEvalAnswers },
-    observacoes: evalNotes.value.trim(),
-    mediaAvaliacao: currentAvg
-  };
+    const faltam = ALL_QUESTIONS.filter(q => !c.answers[q.id]);
+    if (faltam.length) {
+      alert(`Faltam ${faltam.length} pergunta(s) sem nota na coluna de "${nome}". Responda todas as ${TOTAL_QUESTIONS} perguntas (notas de 1 a 4).`);
+      const row = document.querySelector(`.question-row[data-qid="${faltam[0].id}"]`);
+      if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+  }
 
+  const selfCount = Object.keys(selfAnswers).length;
+  if (selfCount > 0 && selfCount < TOTAL_QUESTIONS) {
+    alert(`A autoavaliação está incompleta (${selfCount}/${TOTAL_QUESTIONS}). Responda todas as perguntas ou desmarque todas para deixá-la em branco.`);
+    return;
+  }
+
+  const data = evalDate.value || new Date().toISOString().slice(0, 10);
   if (!colab.avaliacoes) colab.avaliacoes = [];
-  colab.avaliacoes.push(newEval);
+
+  evalColumns.forEach(c => {
+    colab.avaliacoes.push({
+      id: uid(),
+      lider: c.nome.trim(),
+      data,
+      respostas: { ...c.answers },
+      observacoes: c.notes.trim(),
+      mediaAvaliacao: calcMean(Object.values(c.answers))
+    });
+  });
+
+  // Autoavaliação: nota à parte, nunca entra na média dos líderes
+  if (selfCount === TOTAL_QUESTIONS || selfNotes.trim()) {
+    colab.autoavaliacao = {
+      data,
+      respostas: { ...selfAnswers },
+      observacoes: selfNotes.trim(),
+      media: calcMean(Object.values(selfAnswers))
+    };
+  }
 
   saveColaboradores(colaboradores);
 
-  alert(`Avaliação de ${colab.nome} salva com sucesso por ${leader}!`);
+  alert(`Avaliação de ${colab.nome} salva com sucesso por ${evalColumns.map(c => c.nome.trim()).join(', ')}!`);
   navigateTo('list');
+});
+
+btnEvalBack.addEventListener('click', () => navigateTo('list'));
+btnEvalCancel.addEventListener('click', () => {
+  if (confirm('Deseja cancelar o preenchimento? As respostas não salvas serão perdidas.')) {
+    navigateTo('list');
+  }
 });
 
 btnEvalBack.addEventListener('click', () => navigateTo('list'));
@@ -674,56 +766,48 @@ function renderPrintableReport(colab) {
   const diag = getDiagnostic(globalAvg);
   const evals = colab.avaliacoes || [];
   const totalEvals = evals.length;
+  const auto = colab.autoavaliacao || null;
+  const autoAnswers = auto && auto.respostas ? auto.respostas : {};
+  const autoAvg = calcMean(Object.values(autoAnswers));
 
   // Lista dos líderes avaliadores únicos
   const lideresNomes = evals.map(e => e.lider);
   const lideresStr = lideresNomes.length ? lideresNomes.join(', ') : 'Nenhum líder registrado';
 
-  // Médias consolidadas por seção
-  const secConsolidated = SECTIONS.map(s => ({
-    title: s.title,
-    short: s.short,
-    avg: getConsolidatedSectionAverage(colab, s),
-    // Médias por líder para cada seção
-    byLeader: evals.map(e => getSectionAverageForEval(e, s))
-  }));
+  const nCols = evals.length;
+  const qW = nCols >= 4 ? 30 : 38;
 
-  // Montar colunas de cabeçalho da tabela se houver mais de um líder
-  const leaderHeadersHtml = evals.map((e, idx) => 
-    `<th class="center" style="font-size: 0.72rem;">${escapeHtml(e.lider || `Líder ${idx + 1}`)}</th>`
+  const leaderHeadersHtml = evals.map((e, idx) =>
+    `<th class="center" style="font-size: 0.7rem;">${escapeHtml(e.lider || `Líder ${idx + 1}`)}</th>`
   ).join('');
 
-  // Linhas da tabela
-  const tableRowsHtml = secConsolidated.map(sc => {
-    const leaderCellsHtml = sc.byLeader.map(val => `<td class="center">${fmt(val)}</td>`).join('');
-    const pct = sc.avg ? Math.min(100, Math.max(0, (sc.avg / 4) * 100)) : 0;
-    const sDiag = getDiagnostic(sc.avg);
-
-    return `
-      <tr>
-        <td><strong>${escapeHtml(sc.title)}</strong></td>
-        ${leaderCellsHtml}
-        <td class="center" style="font-weight: 700; color: ${sDiag.color};">${fmt(sc.avg)}</td>
-        <td style="width: 140px;">
-          <div class="prog-container">
-            <div class="prog-track">
-              <div class="prog-fill" style="width: ${pct}%; background-color: ${sDiag.color};"></div>
-            </div>
-            <span style="font-size: 0.7rem; font-weight: 700;">${pct ? Math.round(pct) + '%' : '-'}</span>
-          </div>
-        </td>
-      </tr>
-    `;
+  // Linhas da tabela: uma nota por pergunta (agrupadas por seção apenas visualmente)
+  const colSpan = 1 + nCols + 2;
+  const tableRowsHtml = SECTIONS.map(s => {
+    const qRows = s.questions.map(q => {
+      const vals = evals.map(e => (typeof e.respostas[q.id] === 'number' ? e.respostas[q.id] : null));
+      const avg = calcMean(vals);
+      const qDiag = getDiagnostic(avg);
+      const selfVal = typeof autoAnswers[q.id] === 'number' ? autoAnswers[q.id] : null;
+      return `
+        <tr>
+          <td>${escapeHtml(q.text)}</td>
+          ${vals.map(v => `<td class="center">${v === null ? '-' : v}</td>`).join('')}
+          <td class="center" style="font-weight: 700; color: ${qDiag.color};">${fmt(avg)}</td>
+          <td class="center self-col">${selfVal === null ? '' : selfVal}</td>
+        </tr>`;
+    }).join('');
+    return `<tr class="sec-row"><td colspan="${colSpan}">${escapeHtml(s.title)}</td></tr>${qRows}`;
   }).join('');
 
   // Linha totalizadora
-  const totalLeaderCells = evals.map(e => `<td class="center">${fmt(e.mediaAvaliacao)}</td>`).join('');
+  const totalLeaderCells = evals.map(e => `<td class="center">${fmt(calcMean(Object.values(e.respostas)))}</td>`).join('');
   const totalRowHtml = `
     <tr class="total-row">
       <td>MÉDIA GERAL CONSOLIDADA</td>
       ${totalLeaderCells}
       <td class="center" style="font-size: 0.95rem; color: ${diag.color};">${fmt(globalAvg)}</td>
-      <td class="center" style="font-size: 0.75rem;">Escala 1 a 4</td>
+      <td class="center self-col">${autoAvg === null ? '' : fmt(autoAvg)}</td>
     </tr>
   `;
 
@@ -751,6 +835,22 @@ function renderPrintableReport(colab) {
       </div>
     `;
   }
+
+  // Campo de autoavaliação do colaborador (preenchido no app ou à mão no PDF impresso)
+  const autoText = auto && auto.observacoes ? auto.observacoes.trim() : '';
+  const autoBoxHtml = `
+    <div class="rep-section-title">Autoavaliação do Colaborador</div>
+    <div class="rep-self-box">
+      <div class="rep-self-note">Nota à parte: <strong>não compõe a Média Global</strong> calculada pelos líderes.</div>
+      <div class="rep-self-score">Nota da autoavaliação (1 a 4):
+        <span class="rep-self-score-box">${autoAvg === null ? '' : fmt(autoAvg)}</span>
+      </div>
+      <div class="rep-self-label">Comentários do colaborador:</div>
+      ${autoText
+        ? `<div class="rep-note-text" style="margin-bottom:6px;">${escapeHtml(autoText)}</div>`
+        : `<div class="rep-self-line"></div><div class="rep-self-line"></div><div class="rep-self-line"></div><div class="rep-self-line"></div>`}
+    </div>
+  `;
 
   // Montagem do Relatório A4
   printableReport.innerHTML = `
@@ -789,15 +889,15 @@ function renderPrintableReport(colab) {
       <div class="rep-diag-desc">${diag.description}</div>
     </div>
 
-    <!-- TABELA DE MÉDIAS POR SEÇÃO -->
-    <div class="rep-section-title">Desempenho por Seção de Competências</div>
+    <!-- TABELA DE NOTAS POR PERGUNTA -->
+    <div class="rep-section-title">Notas por Pergunta</div>
     <table class="rep-table">
       <thead>
         <tr>
-          <th>Seção Avaliada</th>
+          <th style="width: ${qW}%;">Pergunta</th>
           ${leaderHeadersHtml}
           <th class="center">Média</th>
-          <th>Nível Atingido</th>
+          <th class="center self-col">Autoaval.<br><span style="font-weight:400; font-size:0.62rem;">(não soma)</span></th>
         </tr>
       </thead>
       <tbody>
@@ -806,7 +906,9 @@ function renderPrintableReport(colab) {
       </tbody>
     </table>
 
-    <!-- OBSERVAÇÕES DOS LÍDERES -->
+    ${autoBoxHtml}
+
+    <!-- OBSERVAÇÕES DOS LÍDERES (ao final) -->
     <div class="rep-section-title">Observações e Apontamentos dos Líderes</div>
     ${notesHtml}
 
@@ -830,12 +932,26 @@ function renderPrintableReport(colab) {
       <div class="rep-section-title">Histórico de avaliações (não sai no PDF)</div>
       ${evals.length ? evals.map(e => `
         <div class="history-row">
-          <span><strong>${escapeHtml(e.lider)}</strong> · ${e.data ? new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR') : '-'} · média ${fmt(e.mediaAvaliacao)}</span>
+          <span><strong>${escapeHtml(e.lider)}</strong> · ${e.data ? new Date(e.data + 'T12:00:00').toLocaleDateString('pt-BR') : '-'} · média ${fmt(calcMean(Object.values(e.respostas)))}</span>
           <button class="btn btn-danger-outline" onclick="deleteEvaluation('${colab.id}', '${e.id}')">Excluir avaliação</button>
         </div>`).join('') : '<p class="subtitle">Nenhuma avaliação registrada ainda.</p>'}
+      ${auto ? `
+        <div class="history-row">
+          <span><strong>Autoavaliação</strong> · ${auto.data ? new Date(auto.data + 'T12:00:00').toLocaleDateString('pt-BR') : '-'} · nota ${fmt(autoAvg)} (não soma na média)</span>
+          <button class="btn btn-danger-outline" onclick="deleteSelfEvaluation('${colab.id}')">Excluir autoavaliação</button>
+        </div>` : ''}
     </div>
   `;
 }
+
+window.deleteSelfEvaluation = function(colabId) {
+  const c = colaboradores.find(x => x.id === colabId);
+  if (!c || !c.autoavaliacao) return;
+  if (!confirm('Excluir a autoavaliação deste colaborador?')) return;
+  delete c.autoavaliacao;
+  saveColaboradores(colaboradores);
+  renderPrintableReport(c);
+};
 
 btnReportBack.addEventListener('click', () => navigateTo('list'));
 btnPrintPdf.addEventListener('click', () => {
